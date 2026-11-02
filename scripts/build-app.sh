@@ -8,6 +8,8 @@ swift build -c release --disable-sandbox --scratch-path .build
 swift scripts/make-icon.swift Assets
 APP="$PWD/build/Citadel.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp .build/release/CitadelGitWorker "$APP/Contents/MacOS/CitadelGitWorker"
+codesign --force --sign - "$APP/Contents/MacOS/CitadelGitWorker"
 cp .build/release/Citadel "$APP/Contents/MacOS/Citadel"
 cp Assets/Citadel.icns "$APP/Contents/Resources/CitadelLighthouse.icns"
 cat > "$APP/Contents/Info.plist" <<'PLIST'

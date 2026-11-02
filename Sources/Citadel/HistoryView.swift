@@ -54,8 +54,10 @@ struct HistoryView: View {
                                 }
                             } header: { Text(dayLabel(group.0)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary) }
                         }
-                        if (model.snapshot?.commits.count ?? 0) >= model.commitLimit {
-                            Button("Load Older Commits") { model.commitLimit += 300; Task { await model.refresh() } }
+                        if model.nextHistoryOffset != nil && model.search.isEmpty {
+                            Button(model.loadingMore ? "Loading…" : "Load Older Commits") { Task { await model.loadMoreHistory() } }
+                                .disabled(model.loadingMore)
+                                .onAppear { Task { await model.loadMoreHistory() } }
                                 .frame(maxWidth: .infinity).padding(8)
                         }
                     }.listStyle(.inset)
@@ -63,6 +65,7 @@ struct HistoryView: View {
             }.frame(minWidth: 255, idealWidth: 300, maxWidth: 380, maxHeight: .infinity)
             inspector.frame(minWidth: 350, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onChange(of: model.search) { _, _ in model.searchHistory() }
         .onChange(of: model.selectedCommit) { _, _ in Task { await model.loadCommit() } }
     }
 
@@ -123,8 +126,9 @@ struct HistoryView: View {
                     }.padding(16)
                 }.frame(maxHeight: 280)
                 Divider()
-                DiffView(text: model.historyDiff, filename: model.selectedHistoryFile, subtitle: "Commit changes")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let document = model.historyDocument {
+                    StructuredDiffView(document: document).id(document.id)
+                } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             }
         } else {
             ContentUnavailableView("Commit Details", systemImage: "text.alignleft", description: Text("Select a commit to explore its changes."))

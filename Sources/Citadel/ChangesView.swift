@@ -93,7 +93,7 @@ struct ChangesView: View {
                     }.padding(.horizontal, 14).frame(height: 44)
                     Divider()
                     HStack {
-                        Text(DiffSummary(text: model.diff).label).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(model.selectedFileStaged ? "Staged changes" : "Unstaged changes").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                         Spacer()
                         Button(model.selectedFileStaged ? "Unstage File" : "Stage File") {
                             if model.selectedFileStaged { model.unstage(file) } else { model.stage(file) }
@@ -101,7 +101,9 @@ struct ChangesView: View {
                             .disabled(model.busy || model.loading || (model.selectedFileStaged ? !file.staged : !file.unstaged))
                     }.padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
                     Divider()
-                    DiffBody(text: model.diff)
+                    if let document = model.diffDocument {
+                        StructuredDiffView(document: document).id(document.id)
+                    } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
                 } else {
                     ContentUnavailableView("Change Preview", systemImage: "doc.text.magnifyingglass", description: Text("Select a file to review its changes."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -51,52 +51,20 @@ public struct CommitDetail: Sendable {
 public actor GitRepository {
     public init() {}
 
-    // Files avoid pipe-buffer deadlocks on large histories and diffs. All Git work
-    // runs on this actor, away from the UI's main actor, and uses argument arrays.
     @discardableResult
-    public func run(_ path: String, _ arguments: [String], allowFailure: Bool = false) throws -> String {
-        try Task.checkCancellation()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("citadel-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let out = directory.appendingPathComponent("stdout")
-        let err = directory.appendingPathComponent("stderr")
-        FileManager.default.createFile(atPath: out.path, contents: nil)
-        FileManager.default.createFile(atPath: err.path, contents: nil)
-        let output = try FileHandle(forWritingTo: out)
-        let errors = try FileHandle(forWritingTo: err)
-        defer { try? output.close(); try? errors.close() }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["--literal-pathspecs", "-C", path] + arguments
-        process.standardOutput = output
-        process.standardError = errors
-        process.standardInput = FileHandle.nullDevice
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (environment["PATH"] ?? "")
-        process.environment = environment
-        try process.run()
-        let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: timeout)
-        process.waitUntilExit()
-        timeout.cancel()
-        let stdout = String(decoding: (try? Data(contentsOf: out)) ?? Data(), as: UTF8.self)
-        let stderr = String(decoding: (try? Data(contentsOf: err)) ?? Data(), as: UTF8.self)
-        if process.terminationStatus != 0 && !allowFailure {
-            let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw GitFailure(message.isEmpty ? (stdout.isEmpty ? "Git could not complete this operation." : stdout) : message)
-        }
-        return process.terminationStatus == 0 || !allowFailure ? stdout : ""
+    public func run(_ path: String, _ arguments: [String], allowFailure: Bool = false,
+                    input: Data? = nil, environment: [String: String] = [:]) async throws -> String {
+        let result = try await GitProcess.execute(at: path, arguments: arguments, input: input, environment: environment, allowFailure: allowFailure)
+        return result.status == 0 ? try result.text() : ""
     }
 
-    public func root(at path: String) throws -> String {
+    public func root(at path: String) async throws -> String {
         let expanded = (path as NSString).expandingTildeInPath
-        return try run(expanded, ["rev-parse", "--show-toplevel"]).trimmingCharacters(in: .newlines)
+        return try await run(expanded, ["rev-parse", "--show-toplevel"]).trimmingCharacters(in: .newlines)
     }
 
-    public func changes(at path: String) throws -> [ChangedFile] {
-        let entries = try run(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).components(separatedBy: "\0")
+    public func changes(at path: String) async throws -> [ChangedFile] {
+        let entries = try await run(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).components(separatedBy: "\0")
         var results: [ChangedFile] = []
         var i = 0
         while i < entries.count {
@@ -111,24 +79,24 @@ public actor GitRepository {
         return results
     }
 
-    public func snapshot(at path: String, limit: Int = 300, historyBranch: String? = nil) throws -> RepositorySnapshot {
-        _ = try run(path, ["rev-parse", "--git-dir"])
-        let branch = try run(path, ["symbolic-ref", "--short", "-q", "HEAD"], allowFailure: true).trimmingCharacters(in: .newlines)
-        let branches = try sortedBranches(at: path)
+    public func snapshot(at path: String, limit: Int = 300, historyBranch: String? = nil) async throws -> RepositorySnapshot {
+        _ = try await run(path, ["rev-parse", "--git-dir"])
+        let branch = try await run(path, ["symbolic-ref", "--short", "-q", "HEAD"], allowFailure: true).trimmingCharacters(in: .newlines)
+        let branches = try await sortedBranches(at: path)
         if let historyBranch, !branches.contains(historyBranch) { throw GitFailure("This branch no longer exists. Select History to view the current branch.") }
         let revision = historyBranch.map { "refs/heads/" + $0 } ?? "HEAD"
-        let log = try run(path, ["log", "-\(limit)", "--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%s%x00%D%x00%P%x1e", revision, "--"], allowFailure: historyBranch == nil)
+        let log = try await run(path, ["log", "-\(limit)", "--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%s%x00%D%x00%P%x1e", revision, "--"], allowFailure: historyBranch == nil)
         let commits: [GitCommit] = log.components(separatedBy: "\u{1e}").compactMap { entry in
             let f = entry.trimmingCharacters(in: .newlines).components(separatedBy: "\0")
             guard f.count == 8 else { return nil }
             return GitCommit(hash: f[0], shortHash: f[1], author: f[2], email: f[3], date: Date(timeIntervalSince1970: Double(f[4]) ?? 0), subject: f[5], refs: f[6], parents: f[7].split(separator: " ").map(String.init))
         }
-        let upstream = try run(path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], allowFailure: true).trimmingCharacters(in: .newlines)
-        let counts = upstream.isEmpty ? [] : try run(path, ["rev-list", "--left-right", "--count", "HEAD...@{u}"], allowFailure: true).split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
+        let upstream = try await run(path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], allowFailure: true).trimmingCharacters(in: .newlines)
+        let counts = upstream.isEmpty ? [] : try await run(path, ["rev-list", "--left-right", "--count", "HEAD...@{u}"], allowFailure: true).split(whereSeparator: \.isWhitespace).compactMap { Int($0) }
         return RepositorySnapshot(path: path, branch: branch.isEmpty ? "Detached HEAD" : branch,
                                   branches: branches,
-                                  changes: try changes(at: path), commits: commits, upstream: upstream,
-                                  remotes: try run(path, ["remote"]).split(separator: "\n").map(String.init),
+                                  changes: try await changes(at: path), commits: commits, upstream: upstream,
+                                  remotes: try await run(path, ["remote"]).split(separator: "\n").map(String.init),
                                   ahead: counts.first ?? 0, behind: counts.count == 2 ? counts[1] : 0)
     }
 
@@ -138,9 +106,9 @@ public actor GitRepository {
 
     // Branch refs have no creation-date field. A retained reflog creation entry
     // (zero old object ID) is authoritative; otherwise use the tip commit date.
-    private func sortedBranches(at path: String) throws -> [String] {
-        let refs = try run(path, ["for-each-ref", "--format=%(refname:short)%00%(committerdate:unix)", "refs/heads"])
-        let commonDirectory = try run(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trimmingCharacters(in: .newlines)
+    private func sortedBranches(at path: String) async throws -> [String] {
+        let refs = try await run(path, ["for-each-ref", "--format=%(refname:short)%00%(committerdate:unix)", "refs/heads"])
+        let commonDirectory = try await run(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trimmingCharacters(in: .newlines)
         let branches: [(name: String, date: Int64)] = refs.split(separator: "\n").compactMap { row in
             let fields = row.components(separatedBy: "\0")
             guard fields.count == 2 else { return nil }
@@ -169,27 +137,27 @@ public actor GitRepository {
         guard hash.count == 40 || hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }) else { throw GitFailure("Invalid commit reference.") }
     }
 
-    public func detail(at path: String, commit: String) throws -> CommitDetail {
+    public func detail(at path: String, commit: String) async throws -> CommitDetail {
         try validateRevision(commit)
-        let message = try run(path, ["show", "-s", "--format=%B", commit]).trimmingCharacters(in: .newlines)
+        let message = try await run(path, ["show", "-s", "--format=%B", commit]).trimmingCharacters(in: .newlines)
         // Compare merge commits to the first parent so their actual changes are visible.
-        let files = try run(path, ["diff-tree", "--root", "--first-parent", "-m", "--no-commit-id", "--name-only", "-r", "-z", commit]).split(separator: "\0").map(String.init)
+        let files = try await run(path, ["diff-tree", "--root", "--first-parent", "-m", "--no-commit-id", "--name-only", "-r", "-z", commit]).split(separator: "\0").map(String.init)
         return CommitDetail(message: message, files: Array(NSOrderedSet(array: files)) as? [String] ?? files)
     }
 
-    public func diff(at path: String, file: String, staged: Bool = false, commit: String? = nil) throws -> String {
+    public func diff(at path: String, file: String, staged: Bool = false, commit: String? = nil) async throws -> String {
         try validate([file])
         var text: String
         if let commit {
             try validateRevision(commit)
-            text = try run(path, ["show", "--format=", "--first-parent", "--diff-merges=first-parent", "--no-ext-diff", "--no-textconv", commit, "--", file])
+            text = try await run(path, ["show", "--format=", "--first-parent", "--diff-merges=first-parent", "--no-ext-diff", "--no-textconv", commit, "--", file])
         } else if staged {
-            text = try run(path, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--", file])
+            text = try await run(path, ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--", file])
         } else {
             // Most previews need only a path-scoped diff, not a repository-wide status scan.
-            text = try run(path, ["diff", "--no-ext-diff", "--no-textconv", "--", file])
+            text = try await run(path, ["diff", "--no-ext-diff", "--no-textconv", "--", file])
             if text.isEmpty {
-                let status = try run(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", file])
+                let status = try await run(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", file])
                 if status.hasPrefix("?? ") {
                     let root = URL(fileURLWithPath: path).resolvingSymlinksInPath()
                     let target = root.appendingPathComponent(file).resolvingSymlinksInPath()
@@ -208,34 +176,44 @@ public actor GitRepository {
         return text.count > 500_000 ? String(text.prefix(500_000)) + "\nPreview limited to 500 KB." : text
     }
 
-    public func stage(at path: String, files: [String]) throws {
+    public func stage(at path: String, files: [String]) async throws {
+        try await withMutation(at: path) {
         try validate(files)
-        try run(path, ["add", "--"] + files)
+        try await run(path, ["add", "--"] + files)
+            }
     }
 
-    public func unstage(at path: String, files: [String]) throws {
+    public func unstage(at path: String, files: [String]) async throws {
+        try await withMutation(at: path) {
         try validate(files)
-        let hasHead = try !run(path, ["rev-parse", "--verify", "HEAD"], allowFailure: true).isEmpty
-        try run(path, hasHead ? ["restore", "--staged", "--"] + files : ["rm", "--cached", "--"] + files)
+        let hasHead = try await !run(path, ["rev-parse", "--verify", "HEAD"], allowFailure: true).isEmpty
+        try await run(path, hasHead ? ["restore", "--staged", "--"] + files : ["rm", "--cached", "--"] + files)
+            }
     }
 
-    public func commit(at path: String, message: String) throws {
+    public func commit(at path: String, message: String) async throws {
+        try await withMutation(at: path) {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GitFailure("Write a commit message first.") }
-        try run(path, ["commit", "-m", message])
+        try await run(path, ["commit", "-m", message])
+            }
     }
 
-    public func switchBranch(at path: String, branch: String, create: Bool = false) throws {
+    public func switchBranch(at path: String, branch: String, create: Bool = false) async throws {
+        try await withMutation(at: path) {
         guard !branch.isEmpty, !branch.hasPrefix("-") else { throw GitFailure("Enter a valid branch name.") }
-        try run(path, ["check-ref-format", "--branch", branch])
-        try run(path, create ? ["switch", "-c", branch] : ["switch", "--", branch])
+        try await run(path, ["check-ref-format", "--branch", branch])
+        try await run(path, create ? ["switch", "-c", branch] : ["switch", "--", branch])
+            }
     }
 
-    public func sync(at path: String, operation: String) throws {
+    public func sync(at path: String, operation: String) async throws {
+        try await withMutation(at: path) {
         switch operation {
-        case "fetch": try run(path, ["fetch", "--all"])
-        case "pull": try run(path, ["pull", "--ff-only"])
-        case "push": try run(path, ["push"])
+        case "fetch": try await run(path, ["fetch", "--all"])
+        case "pull": try await run(path, ["pull", "--ff-only"])
+        case "push": try await run(path, ["push"])
         default: throw GitFailure("Unknown Git operation.")
         }
+            }
     }
 }

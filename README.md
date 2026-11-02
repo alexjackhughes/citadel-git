@@ -106,7 +106,7 @@ When contributing, keep Git operations off the main UI thread, pass arguments as
 
 ## Current limits
 
-Citadel is an early, focused Git client. It does not yet offer cloning, repository initialization, stashes, interactive rebase, hunk/line staging, or a merge conflict editor. Resolve conflicts in your editor before staging. Diffs are limited to roughly 500 KB, history loads in batches of 300 commits, and Git operations have a 90-second timeout.
+Citadel is an early, focused Git client. It does not yet offer cloning, repository initialization, stashes, interactive rebase, hunk/line staging, or a merge conflict editor. Resolve conflicts in your editor before staging. Diffs use a file-backed paged viewer instead of a 500 KB cutoff. History appends pages of 300 commits pinned to a stable revision; search walks that full history. Long-running operations show progress and support cancellation instead of a fixed timeout.
 
 Issues and pull requests are welcome in [the GitHub repository](https://github.com/alexjackhughes/citadel-git).
 

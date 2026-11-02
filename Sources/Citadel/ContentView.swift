@@ -102,12 +102,25 @@ struct ContentView: View {
 
     private func workspace(_ snapshot: RepositorySnapshot) -> some View {
         VStack(spacing: 0) {
+            if model.operationState != .idle {
+                HStack {
+                    Label("\(model.operationState.rawValue.capitalized) in progress", systemImage: "exclamationmark.triangle")
+                    Text("Resolve conflicts before continuing.").foregroundStyle(.secondary)
+                    Spacer()
+                }.font(.callout).padding(10).background(Color.orange.opacity(0.12))
+                Divider()
+            }
             if model.tab == .history { HistoryView() } else { ChangesView() }
             Divider()
             HStack(spacing: 7) {
                 if model.busy || model.loading { ProgressView().controlSize(.mini) }
 
                 Text(model.busy ? model.status : (model.snapshot?.changes.isEmpty == true ? "Working tree clean" : "\(model.snapshot?.changes.count ?? 0) uncommitted changes")).lineLimit(1)
+                if model.busy {
+                    if let started = model.operationStarted { Text(started, style: .relative) }
+                    Text(model.operationProgress).lineLimit(1).foregroundStyle(.secondary)
+                    Button("Cancel") { model.cancelOperation() }.controlSize(.small)
+                }
                 Spacer()
                 Image(systemName: "arrow.triangle.branch")
                 Text(snapshot.branch)

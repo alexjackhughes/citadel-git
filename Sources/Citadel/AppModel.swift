@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     @Published var selectedFile: String?
     @Published var selectedFileStaged = false
     @Published var diff = ""
+    @Published var diffDocument: DiffDocument?
+    @Published var historyDocument: DiffDocument?
     @Published var historyDiff = ""
     @Published var message = ""
     @Published var search = ""
@@ -32,6 +34,19 @@ final class AppModel: ObservableObject {
     @Published var status = "Everything stays on your Mac"
     @Published var showNewBranch = false
     @Published var commitLimit = 300
+    @Published var commits: [GitCommit] = []
+    @Published var searchResults: [GitCommit] = []
+    @Published var searching = false
+    @Published var loadingMore = false
+    @Published var nextHistoryOffset: Int?
+    @Published var operationState: RepositoryOperationState = .idle
+    @Published var operationStarted: Date?
+    @Published var operationProgress = ""
+    private var historyTip: String?
+    private var operationTask: Task<Void, Never>?
+    private var searchTask: Task<Void, Never>?
+    private var historyGeneration = UUID()
+
     private var refreshID = UUID()
     private var diffID = UUID()
     private var historyDiffID = UUID()
@@ -52,14 +67,43 @@ final class AppModel: ObservableObject {
         Task { await refresh() }
     }
 
-    var currentCommit: GitCommit? { snapshot?.commits.first { $0.hash == selectedCommit } }
+    var currentCommit: GitCommit? { (commits + searchResults).first { $0.hash == selectedCommit } }
     var stagedFiles: [ChangedFile] { snapshot?.changes.filter(\.staged) ?? [] }
     var unstagedFiles: [ChangedFile] { snapshot?.changes.filter(\.unstaged) ?? [] }
     var canCommit: Bool { !busy && !loading && !stagedFiles.isEmpty && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    var filteredCommits: [GitCommit] {
-        let commits = snapshot?.commits ?? []
-        guard !search.isEmpty else { return commits }
-        return commits.filter { "\($0.subject) \($0.author) \($0.hash) \($0.refs)".localizedCaseInsensitiveContains(search) }
+    var filteredCommits: [GitCommit] { search.isEmpty ? commits : searchResults }
+
+    func loadMoreHistory() async {
+        guard !loadingMore, let offset = nextHistoryOffset, let tip = historyTip, let path = selectedRepository else { return }
+        let generation = historyGeneration
+        loadingMore = true
+        defer { if generation == historyGeneration { loadingMore = false } }
+        do {
+            let page = try await previewGit.history(at: path, revision: tip, offset: offset)
+            guard generation == historyGeneration, path == selectedRepository else { return }
+            commits += page.commits; nextHistoryOffset = page.nextOffset
+        } catch is CancellationError {} catch { self.error = error.localizedDescription }
+    }
+
+    func searchHistory() {
+        searchTask?.cancel(); searchResults = []
+        guard !search.isEmpty, let tip = historyTip, let path = selectedRepository else { searching = false; return }
+        let query = search, generation = historyGeneration
+        searching = true
+        searchTask = Task {
+            defer { if query == search, generation == historyGeneration { searching = false } }
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+                var offset: Int? = 0
+                while let start = offset {
+                    try Task.checkCancellation()
+                    let page = try await previewGit.history(at: path, revision: tip, offset: start)
+                    guard !Task.isCancelled, query == search, generation == historyGeneration else { return }
+                    searchResults += page.commits.filter { "\($0.subject) \($0.author) \($0.hash) \($0.refs)".localizedCaseInsensitiveContains(query) }
+                    offset = page.nextOffset
+                }
+            } catch is CancellationError {} catch { if query == search { self.error = error.localizedDescription } }
+        }
     }
 
     init() {
@@ -108,6 +152,7 @@ final class AppModel: ObservableObject {
         diffID = UUID(); historyDiffID = UUID()
         selectedRepository = path
         UserDefaults.standard.set(path, forKey: "selectedRepository")
+        historyGeneration = UUID(); searchTask?.cancel(); commits = []; nextHistoryOffset = nil; historyTip = nil
         snapshot = nil; selectedCommit = nil; detail = nil; selectedFile = nil
         selectedHistoryFile = nil; diff = ""; historyDiff = ""; search = ""
         message = drafts[path] ?? ""; commitLimit = 300; historyBranch = nil; tab = .changes
@@ -122,6 +167,14 @@ final class AppModel: ObservableObject {
             let result = try await git.snapshot(at: path, limit: commitLimit, historyBranch: historyBranch)
             guard refreshID == request, selectedRepository == path else { return }
             snapshot = result
+            operationState = try await git.operationState(at: path)
+            historyGeneration = UUID(); searchTask?.cancel(); loadingMore = false
+            if let tip = result.commits.first?.hash {
+                let page = try await previewGit.history(at: path, revision: tip)
+                guard refreshID == request, selectedRepository == path else { return }
+                commits = page.commits; historyTip = page.tip; nextHistoryOffset = page.nextOffset
+            } else { commits = []; historyTip = nil; nextHistoryOffset = nil }
+            searchHistory()
             if !result.commits.contains(where: { $0.hash == selectedCommit }) {
                 selectedCommit = result.commits.first?.hash
                 await loadCommit()
@@ -148,13 +201,13 @@ final class AppModel: ObservableObject {
     func previewHistoryFile(_ file: String) async {
         guard let path = selectedRepository, let hash = selectedCommit else { return }
         historyPreviewTask?.cancel()
-        let request = UUID(); historyDiffID = request; selectedHistoryFile = file; historyDiff = ""
+        let request = UUID(); historyDiffID = request; selectedHistoryFile = file; historyDiff = ""; historyDocument = nil
         let task = Task {
             do {
                 try Task.checkCancellation()
-                let result = try await previewGit.diff(at: path, file: file, commit: hash)
+                let result = try await previewGit.diffDocument(at: path, file: file, commit: hash)
                 guard !Task.isCancelled, request == historyDiffID, path == selectedRepository, hash == selectedCommit else { return }
-                historyDiff = result
+                historyDocument = result
             } catch is CancellationError { }
             catch { if request == historyDiffID, path == selectedRepository, hash == selectedCommit { self.error = error.localizedDescription } }
         }
@@ -166,13 +219,13 @@ final class AppModel: ObservableObject {
         guard let path = selectedRepository else { return }
         workingPreviewTask?.cancel()
         let request = UUID(); diffID = request
-        selectedFile = file; selectedFileStaged = staged; diff = ""
+        selectedFile = file; selectedFileStaged = staged; diff = ""; diffDocument = nil
         let task = Task {
             do {
                 try Task.checkCancellation()
-                let result = try await previewGit.diff(at: path, file: file, staged: staged)
+                let result = try await previewGit.diffDocument(at: path, file: file, staged: staged)
                 guard !Task.isCancelled, request == diffID, path == selectedRepository else { return }
-                diff = result
+                diffDocument = result
             } catch is CancellationError { }
             catch { if request == diffID, path == selectedRepository { self.error = error.localizedDescription } }
         }
@@ -182,20 +235,21 @@ final class AppModel: ObservableObject {
 
     func perform(_ title: String, operation: @escaping (GitRepository, String) async throws -> Void) {
         guard let path = selectedRepository, !busy, !loading else { return }
-        busy = true; status = title + "…"
-        Task {
+        busy = true; status = title + "…"; operationStarted = Date(); operationProgress = ""
+        operationTask = Task { [self] in
             do {
-                try await operation(git, path)
+                try await GitOperation.$onEvent.withValue({ [weak self] event in
+                    if case let .output(text) = event { Task { @MainActor in self?.operationProgress = String(text.suffix(300)).trimmingCharacters(in: .whitespacesAndNewlines) } }
+                }) { try await operation(git, path) }
                 status = title + " complete"
-                await refresh()
-            } catch {
-                self.error = error.localizedDescription
-                status = "\(title) did not complete"
-                await refresh()
-            }
-            busy = false
+            } catch is CancellationError { status = title + " cancelled" }
+            catch { self.error = error.localizedDescription; status = "\(title) did not complete" }
+            // A cancelled task cannot run the reconciliation commands.
+            await Task { await self.refresh() }.value
+            busy = false; operationStarted = nil; operationProgress = ""; operationTask = nil
         }
     }
+    func cancelOperation() { operationTask?.cancel() }
 
     func stage(_ file: ChangedFile) { perform("Stage file") { git, path in try await git.stage(at: path, files: file.index == "R" ? [file.path] : file.paths) } }
     func unstage(_ file: ChangedFile) { perform("Unstage file") { git, path in try await git.unstage(at: path, files: file.paths) } }

@@ -7,6 +7,7 @@ let package = Package(
     products: [.executable(name: "Citadel", targets: ["Citadel"])],
     targets: [
         .target(name: "GitCore"),
+        .executableTarget(name: "CitadelGitWorker"),
         .executableTarget(name: "Citadel", dependencies: ["GitCore"]),
         .testTarget(name: "GitCoreTests", dependencies: ["GitCore"])
     ]
