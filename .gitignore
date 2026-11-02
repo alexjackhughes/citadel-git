@@ -1,0 +1,32 @@
+# Local build output and generated icons
+.build/
+build/
+.swiftpm/
+Assets/Citadel.iconset/
+Assets/Citadel.icns
+Assets/Citadel.png
+
+# Local screenshots may contain private repositories or source code
+Screenshots/
+
+# Local settings, credentials and editor state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+.netrc
+credentials.json
+secrets.json
+.citadel/
+.codex/
+.agents/
+.aws/
+.DS_Store
+xcuserdata/
+*.xcuserstate
+__pycache__/
+*.pyc
