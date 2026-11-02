@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import GitCore
 
-enum WorkspaceTab: String, CaseIterable { case history = "History", changes = "Working Copy" }
+enum WorkspaceTab: String, CaseIterable { case history = "History", changes = "Working Copy", stashes = "Stashes" }
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -32,6 +32,9 @@ final class AppModel: ObservableObject {
     @Published var loading = false
     @Published var error: String?
     @Published var status = "Everything stays on your Mac"
+    @Published var creationMode: CreationMode?
+    @Published var stashes: [GitStash] = []
+    @Published var showCreateStash = false
     @Published var showNewBranch = false
     @Published var commitLimit = 300
     @Published var commits: [GitCommit] = []
@@ -43,7 +46,7 @@ final class AppModel: ObservableObject {
     @Published var operationStarted: Date?
     @Published var operationProgress = ""
     private var historyTip: String?
-    private var operationTask: Task<Void, Never>?
+    var operationTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var historyGeneration = UUID()
 
@@ -53,11 +56,13 @@ final class AppModel: ObservableObject {
     private var drafts: [String: String] = [:]
 
     var navigationSelection: String {
+        if tab == .stashes { return "stashes" }
         if tab == .changes { return "working" }
         return historyBranch.map { "branch:" + $0 } ?? "history"
     }
     func navigate(_ selection: String) {
         guard !busy else { return }
+        if selection == "stashes" { tab = .stashes; return }
         if selection == "working" { tab = .changes; return }
         let branch = selection.hasPrefix("branch:") ? String(selection.dropFirst(7)) : nil
         tab = .history
@@ -134,6 +139,25 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func createRepository(mode: CreationMode, source: String, folder: String, name: String, branch: String) {
+        guard !busy else { return }
+        busy = true; status = mode == .clone ? "Cloning…" : "Initializing…"; operationStarted = Date()
+        operationTask = Task { [self] in
+            do {
+                let path = try await GitOperation.$onEvent.withValue({ event in
+                    if case let .output(text) = event { Task { @MainActor in self.operationProgress = String(text.suffix(500)) } }
+                }) {
+                    if mode == .clone { return try await git.clone(source: source, parent: folder, name: name) }
+                    return try await git.initialize(at: folder, branch: branch)
+                }
+                if !repositories.contains(path) { repositories.append(path); persist() }
+                busy = false; creationMode = nil; selectRepository(path)
+            } catch is CancellationError { status = "Cancelled. Any partial destination is preserved." }
+            catch { self.error = error.localizedDescription }
+            busy = false; operationStarted = nil; operationProgress = ""; operationTask = nil
+        }
+    }
+
     func persist() { UserDefaults.standard.set(repositories, forKey: "repositories") }
 
     func removeRepository(_ path: String) {
@@ -168,6 +192,7 @@ final class AppModel: ObservableObject {
             guard refreshID == request, selectedRepository == path else { return }
             snapshot = result
             operationState = try await git.operationState(at: path)
+            stashes = try await git.stashes(at: path)
             historyGeneration = UUID(); searchTask?.cancel(); loadingMore = false
             if let tip = result.commits.first?.hash {
                 let page = try await previewGit.history(at: path, revision: tip)

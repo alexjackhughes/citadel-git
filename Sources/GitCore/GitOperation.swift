@@ -56,7 +56,9 @@ public enum GitProcess {
                         let process = Process()
                         let helper = worker()
                         process.executableURL = helper ?? URL(fileURLWithPath: "/usr/bin/git")
-                        process.arguments = ["--literal-pathspecs", "-C", path] + arguments
+                        // Do not export literal pathspec mode into Git's own stash/rebase helpers.
+                        let pathCommands = ["diff", "show", "status", "add", "restore", "rm", "ls-files", "diff-tree", "checkout-index"]
+                        process.arguments = (pathCommands.contains(arguments.first ?? "") ? ["--literal-pathspecs"] : []) + ["-C", path] + arguments
                         var env = ProcessInfo.processInfo.environment
                         env["GIT_TERMINAL_PROMPT"] = "0"
                         env["GIT_OPTIONAL_LOCKS"] = "0"

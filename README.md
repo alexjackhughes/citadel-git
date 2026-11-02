@@ -12,7 +12,8 @@ Originally built as a personal Git workbench, Citadel is now open source for any
 
 ## What it does
 
-- Add existing local repositories and switch between them.
+- Add existing local repositories, initialize a new one, or clone HTTPS, SSH, and local sources using your existing Git authentication.
+- Create stashes (optionally including untracked files), inspect their files and diffs, apply/pop them, and explicitly delete them. Conflicted applications preserve the stash.
 - Browse a commit timeline with author details, messages, references, and changed files.
 - Click a branch to browse its history without checking it out. Right-click to check out a branch, or create one from the current HEAD.
 - Review working-copy changes in a compact file list with staging checkboxes and separate Staged / Unstaged diff views.
@@ -106,7 +107,7 @@ When contributing, keep Git operations off the main UI thread, pass arguments as
 
 ## Current limits
 
-Citadel is an early, focused Git client. It does not yet offer cloning, repository initialization, stashes, interactive rebase, hunk/line staging, or a merge conflict editor. Resolve conflicts in your editor before staging. Diffs use a file-backed paged viewer instead of a 500 KB cutoff. History appends pages of 300 commits pinned to a stable revision; search walks that full history. Long-running operations show progress and support cancellation instead of a fixed timeout.
+Citadel is an early, focused Git client. It does not yet offer interactive rebase, hunk/line staging, or a merge conflict editor. Resolve conflicts in your editor before staging. Diffs use a file-backed paged viewer instead of a 500 KB cutoff. History appends pages of 300 commits pinned to a stable revision; search walks that full history. Long-running operations show progress and support cancellation instead of a fixed timeout.
 
 Issues and pull requests are welcome in [the GitHub repository](https://github.com/alexjackhughes/citadel-git).
 

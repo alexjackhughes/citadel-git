@@ -22,6 +22,8 @@ struct CitadelApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Add Repository…") { model.addRepository() }.keyboardShortcut("o")
+                Button("Clone Repository…") { model.creationMode = .clone }.disabled(model.busy)
+                Button("New Repository…") { model.creationMode = .initialize }.disabled(model.busy)
             }
             CommandMenu("Repository") {
                 Button("Refresh") { Task { await model.refresh() } }.keyboardShortcut("r").disabled(model.selectedRepository == nil || model.busy)
@@ -29,6 +31,8 @@ struct CitadelApp: App {
                 Divider()
                 Button("Show History") { model.navigate("history") }.keyboardShortcut("1")
                 Button("Show Working Copy") { model.navigate("working") }.keyboardShortcut("2")
+                Button("Show Stashes") { model.navigate("stashes") }.keyboardShortcut("3")
+                Button("Create Stash…") { model.showCreateStash = true }.disabled(model.snapshot == nil || model.busy)
                 Divider()
                 Button("Stage All") { model.stageAll() }.keyboardShortcut("a", modifiers: [.command, .shift]).disabled(model.unstagedFiles.isEmpty || model.busy)
                 Button("Commit Staged Changes") { model.commit() }.keyboardShortcut(.return, modifiers: [.command]).disabled(!model.canCommit)

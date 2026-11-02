@@ -25,6 +25,8 @@ struct ContentView: View {
         }
         .tint(.accentColor)
         .sheet(isPresented: $model.showNewBranch) { branchSheet }
+        .sheet(item: $model.creationMode) { RepositoryCreationView(mode: $0) }
+        .sheet(isPresented: $model.showCreateStash) { CreateStashView() }
     }
 
     private var sidebar: some View {
@@ -56,6 +58,7 @@ struct ContentView: View {
                             if !snapshot.changes.isEmpty { Text("\(snapshot.changes.count)").font(.caption).foregroundStyle(.secondary) }
                         }.tag("working")
                         Label("History", systemImage: "clock.arrow.circlepath").tag("history")
+                        Label("Stashes", systemImage: "archivebox").tag("stashes")
                     }
                     Section {
                         ForEach(snapshot.branches, id: \.self) { branch in
@@ -96,6 +99,7 @@ struct ContentView: View {
             Text("Your repositories. Every change in view.")
                 .font(.system(size: 14)).foregroundStyle(.secondary).multilineTextAlignment(.center).lineSpacing(4)
             Button("Add a Repository…") { model.addRepository() }.controlSize(.regular).buttonStyle(.borderedProminent).padding(.top, 8)
+            HStack { Button("Clone Repository…") { model.creationMode = .clone }; Button("New Repository…") { model.creationMode = .initialize } }
             Text("Add a local Git repository to get started.").font(.caption).foregroundStyle(.tertiary)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -110,7 +114,7 @@ struct ContentView: View {
                 }.font(.callout).padding(10).background(Color.orange.opacity(0.12))
                 Divider()
             }
-            if model.tab == .history { HistoryView() } else { ChangesView() }
+            if model.tab == .history { HistoryView() } else if model.tab == .stashes { StashesView() } else { ChangesView() }
             Divider()
             HStack(spacing: 7) {
                 if model.busy || model.loading { ProgressView().controlSize(.mini) }
@@ -133,7 +137,7 @@ struct ContentView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
             if model.snapshot != nil {
-                Text(model.tab == .changes ? "Working Copy" : (model.historyBranch ?? "History"))
+                Text(model.tab == .history ? (model.historyBranch ?? "History") : model.tab.rawValue)
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             }
         }

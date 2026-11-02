@@ -50,4 +50,43 @@ final class AdvancedGitTests: XCTestCase {
         let changes = try await git.changes(at: path)
         XCTAssertEqual(changes.count, 1)
     }
+    func testCloneInitializeAndStashes() async throws {
+        let new = directory.appendingPathComponent("new repo")
+        try FileManager.default.createDirectory(at: new, withIntermediateDirectories: true)
+        try "keep".write(to: new.appendingPathComponent("existing.txt"), atomically: true, encoding: .utf8)
+        // Initialization inside an existing repository is intentionally rejected.
+        do { _ = try await git.initialize(at: new.path); XCTFail("Nested repository") } catch {}
+        try write("file.txt", "base\n"); try await commit("Initial")
+        let clone = directory.appendingPathComponent("clone")
+        _ = try await git.clone(source: path, parent: path, name: "clone")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: clone.appendingPathComponent("file.txt").path))
+        do { _ = try await git.clone(source: "https://user:secret@example.com/repo", parent: path, name: "bad"); XCTFail("Credentials") } catch {}
+        try FileManager.default.removeItem(at: clone)
+        try FileManager.default.removeItem(at: new)
+        try write("file.txt", "stashed\n"); try write("untracked.txt", "new\n")
+        try await git.createStash(at: path, message: "My stash", includeUntracked: true)
+        let stashes = try await git.stashes(at: path)
+        XCTAssertEqual(stashes.count, 1)
+        let files = try await git.stashFiles(at: path, oid: stashes[0].oid)
+        XCTAssertTrue(files.contains("untracked.txt"))
+        let doc = try await git.stashDiff(at: path, oid: stashes[0].oid, file: "untracked.txt")
+        let page = try await doc.nextPage()
+        XCTAssertTrue(page.lines.contains { $0.text == "+new" })
+        try await git.applyStash(at: path, oid: stashes[0].oid, pop: true)
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("file.txt")), "stashed\n")
+        let remaining = try await git.stashes(at: path); XCTAssertTrue(remaining.isEmpty)
+    }
+    func testStashPopConflictRetainsStash() async throws {
+        try write("file.txt", "base\n"); try await commit("Initial")
+        try write("file.txt", "stash\n")
+        try await git.createStash(at: path, message: "conflict", includeUntracked: false)
+        let stash = try await git.stashes(at: path)[0]
+        try write("file.txt", "branch\n"); try await commit("Conflicting commit")
+        do { try await git.applyStash(at: path, oid: stash.oid, pop: true); XCTFail("Expected conflict") } catch {}
+        let retained = try await git.stashes(at: path)
+        XCTAssertEqual(retained.first?.oid, stash.oid)
+        let changes = try await git.changes(at: path)
+        XCTAssertTrue(changes.contains(where: \.conflicted))
+    }
+
 }
