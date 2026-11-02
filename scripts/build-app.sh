@@ -8,6 +8,8 @@ swift build -c release --disable-sandbox --scratch-path .build
 swift scripts/make-icon.swift Assets
 APP="$PWD/build/Citadel.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp .build/release/CitadelGitEditor "$APP/Contents/MacOS/CitadelGitEditor"
+codesign --force --sign - "$APP/Contents/MacOS/CitadelGitEditor"
 cp .build/release/CitadelGitWorker "$APP/Contents/MacOS/CitadelGitWorker"
 codesign --force --sign - "$APP/Contents/MacOS/CitadelGitWorker"
 cp .build/release/Citadel "$APP/Contents/MacOS/Citadel"
@@ -19,8 +21,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Citadel</string>
 <key>CFBundleDisplayName</key><string>Citadel</string>
 <key>CFBundleIdentifier</key><string>local.alex.Citadel</string>
-<key>CFBundleVersion</key><string>2</string>
-<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.3.0</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleExecutable</key><string>Citadel</string>
 <key>CFBundleIconFile</key><string>CitadelLighthouse</string>

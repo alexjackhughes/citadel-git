@@ -27,6 +27,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showNewBranch) { branchSheet }
         .sheet(item: $model.creationMode) { RepositoryCreationView(mode: $0) }
         .sheet(isPresented: $model.showCreateStash) { CreateStashView() }
+        .sheet(isPresented: $model.showRebase) { RebasePlanView() }
     }
 
     private var sidebar: some View {
@@ -106,14 +107,7 @@ struct ContentView: View {
 
     private func workspace(_ snapshot: RepositorySnapshot) -> some View {
         VStack(spacing: 0) {
-            if model.operationState != .idle {
-                HStack {
-                    Label("\(model.operationState.rawValue.capitalized) in progress", systemImage: "exclamationmark.triangle")
-                    Text("Resolve conflicts before continuing.").foregroundStyle(.secondary)
-                    Spacer()
-                }.font(.callout).padding(10).background(Color.orange.opacity(0.12))
-                Divider()
-            }
+            if model.operationState != .idle { OperationBanner(); Divider() }
             if model.tab == .history { HistoryView() } else if model.tab == .stashes { StashesView() } else { ChangesView() }
             Divider()
             HStack(spacing: 7) {

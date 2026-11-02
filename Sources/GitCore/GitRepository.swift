@@ -164,21 +164,26 @@ public actor GitRepository {
                     guard target.path.hasPrefix(root.path + "/") else { throw GitFailure("This symbolic link points outside the repository.") }
                     let handle = try FileHandle(forReadingFrom: target)
                     defer { try? handle.close() }
-                    let bytes = try handle.read(upToCount: 500_000) ?? Data()
+                    let bytes = try handle.readToEnd() ?? Data()
                     if bytes.contains(0) { return "Binary file — no text preview available." }
                     var lines = String(decoding: bytes, as: UTF8.self).components(separatedBy: "\n")
                     if lines.last == "" { lines.removeLast() }
                     text = lines.map { "+" + $0 }.joined(separator: "\n")
-                    if bytes.count == 500_000 { text += "\nPreview limited to 500 KB." }
+
                 }
             }
         }
-        return text.count > 500_000 ? String(text.prefix(500_000)) + "\nPreview limited to 500 KB." : text
+        return text
     }
 
     public func stage(at path: String, files: [String]) async throws {
         try await withMutation(at: path) {
         try validate(files)
+        let conflicts = try await changes(at: path).filter { $0.conflicted && files.contains($0.path) }
+        for file in conflicts {
+            let snapshot = try await conflict(at: path, file: file.path)
+            if let text = snapshot.result, ConflictBlock.hasMarkers(text) { throw GitFailure("Resolve conflict markers in \(file.path) before staging.") }
+        }
         try await run(path, ["add", "--"] + files)
             }
     }
@@ -207,7 +212,7 @@ public actor GitRepository {
     }
 
     public func sync(at path: String, operation: String) async throws {
-        try await withMutation(at: path) {
+        _ = try await withMutation(at: path) {
         switch operation {
         case "fetch": try await run(path, ["fetch", "--all"])
         case "pull": try await run(path, ["pull", "--ff-only"])

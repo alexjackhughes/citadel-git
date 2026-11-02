@@ -35,6 +35,11 @@ final class AppModel: ObservableObject {
     @Published var creationMode: CreationMode?
     @Published var stashes: [GitStash] = []
     @Published var showCreateStash = false
+    @Published var showRebase = false
+    @Published var rebaseUpstream: String?
+    @Published var rebaseEditing = false
+    @Published var rebaseMessage = ""
+    @Published var lastRebaseBackup: String?
     @Published var showNewBranch = false
     @Published var commitLimit = 300
     @Published var commits: [GitCommit] = []
@@ -174,6 +179,7 @@ final class AppModel: ObservableObject {
         if let previous = selectedRepository { drafts[previous] = message }
         workingPreviewTask?.cancel(); historyPreviewTask?.cancel()
         diffID = UUID(); historyDiffID = UUID()
+        lastRebaseBackup = nil
         selectedRepository = path
         UserDefaults.standard.set(path, forKey: "selectedRepository")
         historyGeneration = UUID(); searchTask?.cancel(); commits = []; nextHistoryOffset = nil; historyTip = nil
@@ -193,6 +199,10 @@ final class AppModel: ObservableObject {
             snapshot = result
             operationState = try await git.operationState(at: path)
             stashes = try await git.stashes(at: path)
+            if operationState == .rebase {
+                let state = try await git.rebaseStatus(at: path)
+                rebaseEditing = state.editing; rebaseMessage = state.message; lastRebaseBackup = state.backupRef
+            } else { rebaseEditing = false }
             historyGeneration = UUID(); searchTask?.cancel(); loadingMore = false
             if let tip = result.commits.first?.hash {
                 let page = try await previewGit.history(at: path, revision: tip)
@@ -270,7 +280,13 @@ final class AppModel: ObservableObject {
             } catch is CancellationError { status = title + " cancelled" }
             catch { self.error = error.localizedDescription; status = "\(title) did not complete" }
             // A cancelled task cannot run the reconciliation commands.
-            await Task { await self.refresh() }.value
+            await Task {
+                await self.refresh()
+                if let conflict = self.snapshot?.changes.first(where: \.conflicted) {
+                    self.tab = .changes
+                    await self.previewFile(conflict.path, staged: false)
+                }
+            }.value
             busy = false; operationStarted = nil; operationProgress = ""; operationTask = nil
         }
     }

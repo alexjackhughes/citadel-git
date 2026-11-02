@@ -37,6 +37,7 @@ struct CitadelApp: App {
                 Button("Stage All") { model.stageAll() }.keyboardShortcut("a", modifiers: [.command, .shift]).disabled(model.unstagedFiles.isEmpty || model.busy)
                 Button("Commit Staged Changes") { model.commit() }.keyboardShortcut(.return, modifiers: [.command]).disabled(!model.canCommit)
                 Divider()
+                Button("Interactive Rebase…") { model.rebaseUpstream = nil; model.showRebase = true }.disabled(model.snapshot == nil || model.busy || model.operationState != .idle)
                 Button("New Branch…") { model.showNewBranch = true }.keyboardShortcut("b", modifiers: [.command, .shift]).disabled(model.snapshot == nil)
             }
         }

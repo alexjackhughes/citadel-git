@@ -15,7 +15,7 @@ public struct ConflictSnapshot: Sendable {
     public let currentLabel: String
     public let incomingLabel: String
     public let crlf: Bool
-    public var editable: Bool { result != nil && versions.allSatisfy { ["100644", "100755"].contains($0.mode) && $0.text != nil } }
+    public var editable: Bool { result != nil && versions.contains { $0.stage == 2 } && versions.contains { $0.stage == 3 } && versions.allSatisfy { ["100644", "100755"].contains($0.mode) && $0.text != nil } }
     public func version(_ stage: Int) -> ConflictVersion? { versions.first { $0.stage == stage } }
 }
 public struct ConflictBlock: Identifiable, Sendable {
@@ -94,6 +94,7 @@ extension GitRepository {
         try await withMutation(at: path) {
             guard snapshot.fingerprint == (try await fingerprint(at: path, file: snapshot.file)) else { throw GitFailure("File or index changed. Reload before choosing a version.") }
             let target = try worktreeURL(at: path, file: snapshot.file)
+            if ((try? FileManager.default.attributesOfItem(atPath: target.path)[.type]) as? FileAttributeType) == .typeDirectory { throw GitFailure("This path is a directory. Resolve it externally without deleting its contents.") }
             if let stage, let version = snapshot.version(stage) {
                 guard version.mode != "160000" else { throw GitFailure("Resolve the submodule in its own repository, then stage its path.") }
                 if (try? target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { try FileManager.default.removeItem(at: target) }

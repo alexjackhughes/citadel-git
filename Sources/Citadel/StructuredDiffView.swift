@@ -20,7 +20,7 @@ struct StructuredDiffView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("\(hunks.count) hunks\(complete ? "" : " loaded")").font(.caption).foregroundStyle(.secondary)
+                Text("\(hunks.count) \(hunks.count == 1 ? "hunk" : "hunks")\(complete ? "" : " loaded")").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if allowsStaging && document.partialStagingAllowed {
                     Button(document.staged ? "Unstage Hunk" : "Stage Hunk") {
@@ -64,7 +64,7 @@ private struct DiffTable: NSViewRepresentable {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true
         let table = CopyableDiffTable()
-        table.headerView = nil; table.rowHeight = 21; table.intercellSpacing = .zero
+        table.headerView = nil; table.rowHeight = 21; table.intercellSpacing = NSSize(width: 6, height: 0)
         table.allowsMultipleSelection = true; table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.setAccessibilityLabel("Diff lines")
         for (id, width) in [("old", CGFloat(52)), ("new", 52), ("text", 900)] {
@@ -79,6 +79,9 @@ private struct DiffTable: NSViewRepresentable {
         }
         scroll.documentView = table
         return scroll
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 600, height: proposal.height ?? 400)
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
@@ -109,12 +112,12 @@ private struct DiffTable: NSViewRepresentable {
             return field
         }
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-            let view = NSTableRowView()
+            let view = DiffRowView()
             switch parent.lines[row].kind {
-            case .addition: view.backgroundColor = .systemGreen.withAlphaComponent(0.14)
-            case .deletion: view.backgroundColor = .systemRed.withAlphaComponent(0.14)
-            case .header: view.backgroundColor = .systemBlue.withAlphaComponent(0.08)
-            default: view.backgroundColor = .textBackgroundColor
+            case .addition: view.tint = .systemGreen.withAlphaComponent(0.14)
+            case .deletion: view.tint = .systemRed.withAlphaComponent(0.14)
+            case .header: view.tint = .systemBlue.withAlphaComponent(0.08)
+            default: view.tint = .textBackgroundColor
             }
             return view
         }
@@ -129,5 +132,13 @@ private final class CopyableDiffTable: NSTableView {
     @objc func copy(_ sender: Any?) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(copyRows?(selectedRowIndexes) ?? "", forType: .string)
+    }
+}
+
+private final class DiffRowView: NSTableRowView {
+    var tint = NSColor.textBackgroundColor
+    override func drawBackground(in dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill(); dirtyRect.fill()
+        tint.setFill(); dirtyRect.fill()
     }
 }

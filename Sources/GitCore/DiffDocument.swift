@@ -167,9 +167,11 @@ extension GitRepository {
     public func fingerprint(at path: String, file: String) async throws -> SourceFingerprint {
         guard !file.hasPrefix("/"), !file.components(separatedBy: "/").contains("..") else { throw GitFailure("Invalid repository path.") }
         let index = try await run(path, ["ls-files", "--stage", "-z", "--", file])
-        let url = URL(fileURLWithPath: path).appendingPathComponent(file)
+        let url = try worktreeURL(at: path, file: file)
         var hasher = SHA256()
-        let type = (try? FileManager.default.attributesOfItem(atPath: url.path)[.type]) as? FileAttributeType
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let type = attributes?[.type] as? FileAttributeType
+        hasher.update(data: Data("\(type?.rawValue ?? "missing"):\(attributes?[.posixPermissions] ?? "none")\n".utf8))
         if type == .typeSymbolicLink {
             hasher.update(data: Data((try FileManager.default.destinationOfSymbolicLink(atPath: url.path)).utf8))
         } else if let handle = try? FileHandle(forReadingFrom: url) {

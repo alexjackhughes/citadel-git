@@ -171,4 +171,53 @@ final class AdvancedGitTests: XCTestCase {
         try await git.markResolved(at: path, snapshot: chosen)
     }
 
+    func testTenThousandCommitPaginationWithoutDuplicates() async throws {
+        var stream = ""
+        for index in 0..<10_050 {
+            let message = "Commit \(index)"
+            stream += "commit refs/heads/main\nmark :\(index + 1)\ncommitter Test <test@example.com> \(1_600_000_000 + index) +0000\ndata \(message.utf8.count)\n\(message)\n"
+            if index > 0 { stream += "from :\(index)\n" }
+            stream += "\n"
+        }
+        stream += "done\n"
+        try await git.run(path, ["fast-import", "--quiet"], input: Data(stream.utf8))
+        var offset: Int? = 0, tip = "HEAD", seen = Set<String>(), count = 0
+        while let start = offset {
+            let page = try await git.history(at: path, revision: tip, offset: start)
+            tip = page.tip; offset = page.nextOffset
+            for commit in page.commits { XCTAssertTrue(seen.insert(commit.hash).inserted); count += 1 }
+        }
+        XCTAssertEqual(count, 10_050)
+    }
+    func testMultipleHunksAndExternalEditProtection() async throws {
+        let original = (0..<40).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        try write("file.txt", original); try await commit("Initial")
+        let working = original.replacingOccurrences(of: "line 2\n", with: "replacement 2\n").replacingOccurrences(of: "line 35\n", with: "replacement 35\n")
+        try write("file.txt", working)
+        let doc = try await git.diffDocument(at: path, file: "file.txt")
+        let page = try await doc.nextPage()
+        XCTAssertEqual(page.hunks.count, 2)
+        let ids = Set(page.lines.filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
+        try await git.applySelection(at: path, document: doc, selected: ids)
+        let index = try await git.run(path, ["show", ":file.txt"]); XCTAssertEqual(index, working)
+        let staged = try await git.diffDocument(at: path, file: "file.txt", staged: true)
+        let stagedPage = try await staged.nextPage()
+        let firstHunk = Set(stagedPage.hunks[0].lineIDs)
+        try write("file.txt", working + "external\n")
+        do { try await git.applySelection(at: path, document: staged, selected: firstHunk); XCTFail("External edit") } catch {}
+        let untouchedIndex = try await git.run(path, ["show", ":file.txt"]); XCTAssertEqual(untouchedIndex, working)
+    }
+    func testInitializeStandalonePreservesExistingFile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("citadel-init-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try "keep".write(to: folder.appendingPathComponent("existing"), atomically: true, encoding: .utf8)
+        _ = try await git.initialize(at: folder.path)
+        let snapshot = try await git.snapshot(at: folder.path)
+        XCTAssertEqual(snapshot.branch, "main"); XCTAssertTrue(snapshot.commits.isEmpty)
+        XCTAssertEqual(snapshot.changes.first?.index, "?")
+        let reopened = try await git.initialize(at: folder.path)
+        XCTAssertEqual(URL(fileURLWithPath: reopened).resolvingSymlinksInPath().path, folder.resolvingSymlinksInPath().path)
+    }
+
 }

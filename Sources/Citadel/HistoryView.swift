@@ -50,6 +50,10 @@ struct HistoryView: View {
                                         .contextMenu {
                                             Button("Copy Commit Hash") { copy(commit.hash) }
                                             Button("Copy Commit Message") { copy(commit.subject) }
+                                            Button("Rebase Starting Here…") {
+                                                model.rebaseUpstream = commit.parents.first
+                                                model.showRebase = true
+                                            }.disabled(model.busy || model.operationState != .idle || (model.historyBranch != nil && model.historyBranch != model.snapshot?.branch))
                                         }
                                 }
                             } header: { Text(dayLabel(group.0)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary) }
