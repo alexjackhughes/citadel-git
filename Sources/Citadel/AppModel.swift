@@ -75,7 +75,7 @@ final class AppModel: ObservableObject {
     var currentCommit: GitCommit? { (commits + searchResults).first { $0.hash == selectedCommit } }
     var stagedFiles: [ChangedFile] { snapshot?.changes.filter(\.staged) ?? [] }
     var unstagedFiles: [ChangedFile] { snapshot?.changes.filter(\.unstaged) ?? [] }
-    var canCommit: Bool { !busy && !loading && !stagedFiles.isEmpty && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canCommit: Bool { !busy && !loading && !stagedFiles.isEmpty && !(snapshot?.changes.contains(where: \.conflicted) ?? false) && operationState != .rebase && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var filteredCommits: [GitCommit] { search.isEmpty ? commits : searchResults }
 
     func loadMoreHistory() async {

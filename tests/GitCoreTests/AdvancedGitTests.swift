@@ -127,4 +127,48 @@ final class AdvancedGitTests: XCTestCase {
         do { try await git.applySelection(at: path, document: incomplete, selected: [chosen.id]); XCTFail("Incomplete hunk") } catch {}
     }
 
+    func makeConflict() async throws {
+        try write("file.txt", "base\n"); try await commit("Initial")
+        try await git.switchBranch(at: path, branch: "other", create: true)
+        try write("file.txt", "incoming\n"); try await commit("Incoming")
+        try await git.switchBranch(at: path, branch: "main")
+        try write("file.txt", "current\n"); try await commit("Current")
+        _ = try await git.run(path, ["merge", "other"], allowFailure: true)
+    }
+    func testConflictDraftSaveResolveAndExternalChange() async throws {
+        try await makeConflict()
+        let snapshot = try await git.conflict(at: path, file: "file.txt")
+        XCTAssertTrue(snapshot.editable)
+        XCTAssertEqual(snapshot.version(1)?.text, "base\n")
+        XCTAssertEqual(snapshot.version(2)?.text, "current\n")
+        XCTAssertEqual(snapshot.version(3)?.text, "incoming\n")
+        XCTAssertEqual(ConflictBlock.parse(snapshot.result!).count, 1)
+        do { try await git.markResolved(at: path, snapshot: snapshot); XCTFail("Markers remain") } catch {}
+        try write("file.txt", "external edit\n")
+        do { _ = try await git.saveConflict(at: path, snapshot: snapshot, result: "draft\n"); XCTFail("Stale source") } catch {}
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("file.txt")), "external edit\n")
+        let fresh = try await git.conflict(at: path, file: "file.txt")
+        let saved = try await git.saveConflict(at: path, snapshot: fresh, result: "resolved\n")
+        let pending = try await git.changes(at: path); XCTAssertTrue(pending[0].conflicted)
+        try await git.markResolved(at: path, snapshot: saved)
+        let resolved = try await git.changes(at: path); XCTAssertFalse(resolved.contains(where: \.conflicted))
+        let state = try await git.operationState(at: path); XCTAssertEqual(state, .merge)
+    }
+    func testBinaryConflictWholeVersionAndDiff3Parsing() async throws {
+        let sample = "before\n<<<<<<< current\nA\n||||||| base\nB\n=======\nC\n>>>>>>> incoming\nafter\n"
+        let blocks = ConflictBlock.parse(sample)
+        XCTAssertEqual(blocks.count, 1); XCTAssertEqual(blocks[0].current, "A\n"); XCTAssertEqual(blocks[0].incoming, "C\n")
+        try write("file.txt", "base\0"); try await commit("Initial")
+        try await git.switchBranch(at: path, branch: "other", create: true)
+        try write("file.txt", "incoming\0"); try await commit("Incoming")
+        try await git.switchBranch(at: path, branch: "main")
+        try write("file.txt", "current\0"); try await commit("Current")
+        _ = try await git.run(path, ["merge", "other"], allowFailure: true)
+        let snapshot = try await git.conflict(at: path, file: "file.txt")
+        XCTAssertFalse(snapshot.editable)
+        let chosen = try await git.chooseConflictVersion(at: path, snapshot: snapshot, stage: 3)
+        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("file.txt")), Data("incoming\0".utf8))
+        try await git.markResolved(at: path, snapshot: chosen)
+    }
+
 }

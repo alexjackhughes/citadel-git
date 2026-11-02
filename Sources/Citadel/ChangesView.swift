@@ -79,7 +79,9 @@ struct ChangesView: View {
                 }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
             }.frame(minWidth: 280, idealWidth: 350, maxWidth: 480)
             VStack(spacing: 0) {
-                if let file = selected {
+                if let file = selected, file.conflicted {
+                    ConflictEditorView(file: file.path).id(file.path)
+                } else if let file = selected {
                     HStack(spacing: 8) {
                         Image(nsImage: FileIcons.icon(for: file.path)).resizable().frame(width: 20, height: 20)
                         Text(URL(fileURLWithPath: file.path).lastPathComponent).font(.system(size: 13, weight: .semibold)).lineLimit(1).help(file.path)
