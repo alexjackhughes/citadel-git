@@ -89,4 +89,42 @@ final class AdvancedGitTests: XCTestCase {
         XCTAssertTrue(changes.contains(where: \.conflicted))
     }
 
+    func testPartialLineStageUnstageAndStaleProtection() async throws {
+        let file = "-literal [日本].txt"
+        try write(file, "one\r\ntwo\r\nthree\r\n"); try await commit("Initial")
+        let working = "one\r\ntwo changed\r\nthree\r\nfour\r\n"
+        try write(file, working)
+        let doc = try await git.diffDocument(at: path, file: file)
+        let page = try await doc.nextPage()
+        let added = page.lines.first { $0.text == "+four\r" }!
+        try await git.applySelection(at: path, document: doc, selected: [added.id])
+        let index = try await git.run(path, ["show", ":" + file])
+        XCTAssertEqual(index, "one\r\ntwo\r\nthree\r\nfour\r\n")
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(file)), working)
+        do { try await git.applySelection(at: path, document: doc, selected: [added.id]); XCTFail("Stale snapshot") } catch {}
+        let staged = try await git.diffDocument(at: path, file: file, staged: true)
+        let stagedPage = try await staged.nextPage()
+        let ids = Set(stagedPage.lines.filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
+        try await git.applySelection(at: path, document: staged, selected: ids)
+        let cleanIndex = try await git.run(path, ["diff", "--cached"])
+        XCTAssertEqual(cleanIndex, "")
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(file)), working)
+    }
+    func testPartialNewFileAndIncompleteHunk() async throws {
+        try write("base", "base\n"); try await commit("Initial")
+        try write("new.txt", "first\nsecond")
+        let doc = try await git.diffDocument(at: path, file: "new.txt")
+        let page = try await doc.nextPage()
+        let second = page.lines.first { $0.text == "+second" }!
+        try await git.applySelection(at: path, document: doc, selected: [second.id])
+        let index = try await git.run(path, ["show", ":new.txt"])
+        XCTAssertEqual(index, "second")
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("new.txt")), "first\nsecond")
+        try write("base", (0..<1000).map(String.init).joined(separator: "\n"))
+        let incomplete = try await git.diffDocument(at: path, file: "base")
+        let smallPage = try await incomplete.nextPage(count: 10)
+        let chosen = smallPage.lines.first { $0.kind == .addition }!
+        do { try await git.applySelection(at: path, document: incomplete, selected: [chosen.id]); XCTFail("Incomplete hunk") } catch {}
+    }
+
 }

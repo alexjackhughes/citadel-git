@@ -117,7 +117,7 @@ public actor DiffDocument {
         var result = "diff --git \(quotedA) \(quotedB)\n--- \(quotedA)\n+++ \(quotedB)\n"
         // For a new file, a selected patch creates only the selected contents.
         if !staged && headers.contains("--- /dev/null") {
-            result = "diff --git \(quotedA) \(quotedB)\nnew file mode 100644\n--- /dev/null\n+++ \(quotedB)\n"
+            result = "diff --git \(quotedA) \(quotedB)\n\(headers.first(where: { $0.hasPrefix("new file mode ") }) ?? "new file mode 100644")\n--- /dev/null\n+++ \(quotedB)\n"
         }
         var cumulativeDelta = 0
         for hunk in involved {
@@ -169,7 +169,10 @@ extension GitRepository {
         let index = try await run(path, ["ls-files", "--stage", "-z", "--", file])
         let url = URL(fileURLWithPath: path).appendingPathComponent(file)
         var hasher = SHA256()
-        if let handle = try? FileHandle(forReadingFrom: url) {
+        let type = (try? FileManager.default.attributesOfItem(atPath: url.path)[.type]) as? FileAttributeType
+        if type == .typeSymbolicLink {
+            hasher.update(data: Data((try FileManager.default.destinationOfSymbolicLink(atPath: url.path)).utf8))
+        } else if let handle = try? FileHandle(forReadingFrom: url) {
             defer { try? handle.close() }
             while let bytes = try handle.read(upToCount: 65_536), !bytes.isEmpty { try Task.checkCancellation(); hasher.update(data: bytes) }
         }
@@ -198,8 +201,8 @@ extension GitRepository {
         }
         if let before, before != (try await fingerprint(at: path, file: file)) { throw GitFailure("This file changed while loading. Select it again to refresh.") }
         let status = commit == nil ? try await run(path, ["status", "--porcelain=v1", "-z", "--", file]) : ""
-        let modeSupported = index.isEmpty || index.split(separator: "\0").allSatisfy { $0.hasPrefix("100644 ") || $0.hasPrefix("100755 ") }
-        let partial = commit == nil && modeSupported && !status.hasPrefix("R") && !status.prefix(2).contains("U") && !status.hasPrefix("AA") && !status.hasPrefix("DD")
+        let modeSupported = ((try? FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: path).appendingPathComponent(file).path)[.type]) as? FileAttributeType) != .typeSymbolicLink && (index.isEmpty || index.split(separator: "\0").allSatisfy { $0.hasPrefix("100644 ") || $0.hasPrefix("100755 ") })
+        let partial = commit == nil && modeSupported && !status.prefix(2).contains("R") && !status.prefix(2).contains("C") && !status.prefix(2).contains("U") && !status.hasPrefix("AA") && !status.hasPrefix("DD")
         return try DiffDocument(output: output, file: file, staged: staged, fingerprint: before, partial: partial)
     }
     public func applySelection(at path: String, document: DiffDocument, selected: Set<Int>) async throws {

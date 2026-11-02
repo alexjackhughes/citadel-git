@@ -102,7 +102,7 @@ struct ChangesView: View {
                     }.padding(.horizontal, 14).padding(.vertical, 8).background(.bar)
                     Divider()
                     if let document = model.diffDocument {
-                        StructuredDiffView(document: document).id(document.id)
+                        StructuredDiffView(document: document, allowsStaging: true).id(document.id)
                     } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
                 } else {
                     ContentUnavailableView("Change Preview", systemImage: "doc.text.magnifyingglass", description: Text("Select a file to review its changes."))
